@@ -42,7 +42,6 @@
 #include <math.h>
 #include "limits.h"
 #include "iir.h"
-#include "dsp.h"
 
 /**********************************************************************
   binomial_mult - multiplies a series of binomials together and returns

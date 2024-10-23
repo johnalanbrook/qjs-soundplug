@@ -5,7 +5,6 @@
 #include "tml.h"
 #include "sound.h"
 #include <stdlib.h>
-#include "stb_ds.h"
 
 #define TSF_BLOCK 32
 
@@ -14,7 +13,7 @@ static struct {
   tsf *value;
 } *sf_hash = NULL;
 
-void dsp_midi_fillbuf(struct dsp_midi_song *restrict song, void *restrict out, int n)
+void dsp_midi_fillbuf(struct dsp_midi_song *restrict song, void *restrict out, int n, int CHANNELS, int SAMPLERATE)
 {
   soundbyte *o = out;
   tml_message *midi = song->midi;
@@ -53,18 +52,13 @@ void dsp_midi_fillbuf(struct dsp_midi_song *restrict song, void *restrict out, i
   song->midi = midi;
 }
 
-tsf *make_soundfont(const char *path, void *raw, size_t rawlen)
+tsf *make_soundfont(const char *path, void *raw, size_t rawlen, int SAMPLERATE)
 {
-  int idx = shgeti(sf_hash, path);
-  if (idx != -1) return sf_hash[idx].value;
-  
   tsf *sf = tsf_load_memory(raw,rawlen);
   
   tsf_set_output(sf, TSF_STEREO_INTERLEAVED, SAMPLERATE, 0.f);
   // Preset on 10th MIDI channel to use percussion sound bank if possible  
   tsf_channel_set_bank_preset(sf, 0, 128, 0);
-
-  shput(sf_hash, path, sf);
   return sf;
 }
 
@@ -75,13 +69,12 @@ void dsp_midi_free(struct dsp_midi_song *ms)
   free(ms);
 }
 
-dsp_node *dsp_midi(const char *midi, tsf *sf, void *raw, size_t rawlen)
+void dsp_midi(const char *midi, tsf *sf, void *raw, size_t rawlen)
 {
   struct dsp_midi_song *ms = malloc(sizeof(*ms));
   ms->time = 0.0;
   ms->midi = tml_load_memory(raw, rawlen);
   ms->sf = tsf_copy(sf);
-  return make_node(ms, dsp_midi_fillbuf, dsp_midi_free);
 }
 
 void play_song(const char *midi, const char *sf)

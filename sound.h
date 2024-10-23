@@ -2,10 +2,7 @@
 #define SOUND_H
 
 #include <stddef.h>
-
-typedef float soundbyte;
-
-struct dsp_node;
+#include "dsp.h"
 
 /* A bookmark into a wav, actually playing the sound */
 typedef struct sound {
@@ -30,9 +27,6 @@ struct pcm *make_pcm(void *raw, size_t rawlen, char *ext);
 void pcm_free(pcm *pcm);
 void pcm_norm_gain(struct pcm *w, double lv);
 void pcm_format(pcm *pcm, int samplerate, int channels);
-
-struct dsp_node *dsp_source(pcm *pcm);
-struct dsp_node *dsp_mod(const char *path, void *data, size_t modsize);
 
 int sound_finished(const struct sound *s);
 

@@ -5,27 +5,13 @@
 #include "math.h"
 #include "stdlib.h"
 #include "iir.h"
-#include "stb_ds.h"
 #include "smbPitchShift.h"
-
-#include "pthread.h"
 
 #define PI 3.14159265
 
 int SAMPLERATE = 48000;
 int BUF_FRAMES = 2048;
 int CHANNELS = 2;
-
-dsp_node *masterbus = NULL;
-
-void iir_free(struct dsp_iir *iir)
-{
-  free(iir->a);
-  free(iir->b);
-  free(iir->x);
-  free(iir->y);
-  free(iir);
-}
 
 void interleave(soundbyte *a, soundbyte *b, soundbyte *restrict stereo, int frames)
 {
@@ -57,47 +43,9 @@ void mono_expand(soundbyte *restrict buffer, int to, int frames)
       buffer[i*to+j] = hold[i];
 }
 
-dsp_node *dsp_mixer_node()
+void dsp_am_mod(soundbyte *in, soundbyte *out, int frames)
 {
-  return make_node(NULL, NULL, NULL);
-}
-
-void dsp_init()
-{
-  masterbus = dsp_limiter(1.0);
-}
-
-soundbyte *dsp_node_out(dsp_node *node)
-{
-  zero_soundbytes(node->cache, BUF_FRAMES*CHANNELS);
-  
-  if (node->off) return node->cache;
-
-  /* Sum all inputs */
-  for (int i = 0; i < arrlen(node->ins); i++) {
-    soundbyte *out = dsp_node_out(node->ins[i]);
-    sum_soundbytes(node->cache, out, BUF_FRAMES*CHANNELS);
-  }
-  
-  /* If there's a filter, run it */
-  if (!node->pass && node->proc)
-    node->proc(node->data, node->cache, BUF_FRAMES);
-
-  scale_soundbytes(node->cache, node->gain, BUF_FRAMES*CHANNELS);
-  pan_frames(node->cache, node->pan, BUF_FRAMES);
-    
-  return node->cache;
-}
-
-void filter_am_mod(dsp_node *restrict mod, soundbyte *restrict buffer, int frames)
-{
-  soundbyte *m = dsp_node_out(mod);
-  for (int i = 0; i < frames*CHANNELS; i++) buffer[i] *= m[i];
-}
-
-dsp_node *dsp_am_mod(dsp_node *mod)
-{
-  return make_node(mod, filter_am_mod, node_free);
+  for (int i = 0; i < frames*CHANNELS; i++) out[i] *= in[i];
 }
 
 /* Add b into a */
@@ -129,67 +77,7 @@ void set_soundbytes(soundbyte *a, soundbyte *b, int samples)
   sum_soundbytes(a,b,samples);
 }
 
-void dsp_node_run(dsp_node *node)
-{
-  zero_soundbytes(node->cache, BUF_FRAMES*CHANNELS);
-  
-  for (int i = 0; i < arrlen(node->ins); i++) {
-    soundbyte *out = dsp_node_out(node->ins[i]);
-    sum_soundbytes(node->cache, out, BUF_FRAMES);
-  }
-}
-
 static int node_count = 0;
-
-dsp_node *make_node(void *data, void (*proc)(void *data, soundbyte *out, int samples), void (*fr)(void *data))
-{
-  dsp_node *self = malloc(sizeof(dsp_node));
-  memset(self, 0, sizeof(*self));
-  self->data = data;
-  self->cache = calloc(BUF_FRAMES*CHANNELS*sizeof(soundbyte),1);
-  self->proc = proc;
-  self->pass = 0;
-  self->gain = 1;
-  return self;
-}
-
-void node_free(dsp_node *node)
-{
-  if (node == masterbus) {
-    return; /* Simple check to not delete the masterbus */
-  }
-//  unplug_node(node);
-  if (node->data) {
-    if (node->data_free)
-      node->data_free(node->data);
-    else
-      free(node->data);
-  }
-
-  free(node);
-}
-
-void dsp_node_free(dsp_node *node) { node_free(node); }
-
-void plugin_node(dsp_node *from, dsp_node *to)
-{
-  if (from->out) return;
-  arrput(to->ins, from);
-  from->out = to;
-}
-
-/* Unplug the given node from its output */
-void unplug_node(dsp_node *node) 
-{
-  if (!node->out) return;
-  
-  for (int i = 0; arrlen(node->out->ins); i++)
-    if (node == node->out->ins[i]) {
-      arrdelswap(node->out->ins, i);
-      node->out = NULL;
-      return;
-    }
-}
 
 float sin_phasor(float p)
 {
@@ -211,7 +99,7 @@ float tri_phasor(float p)
     return 4*(p * 0.5f ? p : (1-p)) - 1;
 }
 
-void filter_phasor(phasor *p, soundbyte *buffer, int frames)
+/*void filter_phasor(phasor *p, soundbyte *buffer, int frames)
 {
   for (int i = 0; i < frames; i++) {
     buffer[i] = p->filter(p->phase) * p->amp;
@@ -219,26 +107,11 @@ void filter_phasor(phasor *p, soundbyte *buffer, int frames)
   }
   p->phase = p->phase - (int)p->phase;
   mono_expand(buffer, CHANNELS, frames);
-}
+}*/
 
-dsp_node *dsp_phasor(float amp, float freq, float (*filter)(float))
+void dsp_rectify(soundbyte *in, soundbyte *out, int frames)
 {
-  phasor *p = malloc(sizeof(*p));
-  p->amp = amp;
-  p->freq = freq;
-  p->phase = 0;
-  p->filter = filter;
-  return make_node(p, filter_phasor, NULL);
-}
-
-void filter_rectify(void *restrict data, soundbyte *restrict out, int n)
-{
-  for (int i = 0; i < n; i++) out[i] = fabsf(out[i]);
-}
-
-dsp_node *dsp_rectify()
-{
-  return make_node(NULL, filter_rectify, NULL);
+  for (int i = 0; i < frames; i++) out[i] = fabsf(in[i]);
 }
 
 soundbyte sample_whitenoise()
@@ -254,9 +127,8 @@ void gen_whitenoise(void *data, soundbyte *out, int n)
   mono_expand(out, CHANNELS, n);
 }
 
-dsp_node *dsp_whitenoise()
+void dsp_whitenoise(soundbyte *out)
 {
-  return make_node(NULL, gen_whitenoise, NULL);
 }
 
 void gen_pinknoise(struct dsp_iir *pink, soundbyte *out, int n)
@@ -287,7 +159,7 @@ void gen_pinknoise(struct dsp_iir *pink, soundbyte *out, int n)
     */
 }
 
-dsp_node *dsp_pinknoise()
+void dsp_pinknoise()
 {
   struct dsp_iir *pink = malloc(sizeof(*pink));
   *pink = make_iir(6);
@@ -295,8 +167,6 @@ dsp_node *dsp_pinknoise()
   float pinkb[7] = {0.99886, 0.99332, 0.969, 0.8665, 0.55, -0.7616, 0.115926};  
   memcpy(pink->a, pinka, 7*sizeof(float));
   memcpy(pink->b, pinkb, 7*sizeof(float));
-
-  return make_node(pink, gen_pinknoise, iir_free);
 }
 
 void filter_rednoise(soundbyte *restrict last, soundbyte *out, int frames)
@@ -309,11 +179,10 @@ void filter_rednoise(soundbyte *restrict last, soundbyte *out, int frames)
   }
 }
 
-dsp_node *dsp_rednoise()
+void dsp_rednoise()
 {
   soundbyte *last = malloc(sizeof(soundbyte));
   *last = 0;
-  return make_node(last,filter_rednoise, NULL);
 }
 
 void filter_pitchshift(float *restrict octaves, soundbyte *buffer, int frames)
@@ -323,13 +192,6 @@ void filter_pitchshift(float *restrict octaves, soundbyte *buffer, int frames)
     ch1[i] = buffer[i*CHANNELS];
   smbPitchShift(*octaves, frames, 1024, 4,  SAMPLERATE, ch1, buffer);
   mono_expand(buffer, CHANNELS, frames);
-}
-
-dsp_node *dsp_pitchshift(float octaves)
-{
-  float *oct = malloc(sizeof(float));
-  *oct = octaves;
-  return make_node(oct, filter_pitchshift, NULL);
 }
 
 soundbyte iir_filter(struct dsp_iir iir, soundbyte val)
@@ -361,62 +223,12 @@ void filter_iir(struct dsp_iir *iir, soundbyte *buffer, int frames)
   }
 }
 
-dsp_node *dsp_lpf(float freq)
+void dsp_delay(soundbyte *in, soundbyte *out, int frames, double sec, double decay)
 {
-  struct dsp_iir *iir = malloc(sizeof(*iir));
-  *iir = bqlp_dcof(2*freq/SAMPLERATE, 5);
-  return make_node(iir, filter_iir, iir_free);
-}
-
-dsp_node *dsp_hpf(float freq)
-{
-  struct dsp_iir *iir = malloc(sizeof(*iir));
-  *iir = bqhp_dcof(2*freq/SAMPLERATE,5);
-  return make_node(iir, filter_iir, iir_free);
-}
-
-void filter_delay(delay *d, soundbyte *buf, int frames)
-{
-  for (int i = 0; i < frames*CHANNELS; i++) {
-    buf[i] += ringshift(d->ring)*d->decay;
-    ringpush(d->ring, buf[i]);
-  }
-}
-
-void delay_free(delay *d)
-{
-  ringfree(d->ring);
-  free(d);
-}
-
-dsp_node *dsp_delay(double sec, double decay)
-{
-  delay *d = malloc(sizeof(*d));
-  d->ms_delay = sec;
-  d->decay = decay;
-  d->ring = NULL;
-  d->ring = ringnew(d->ring, sec*CHANNELS*SAMPLERATE*2);    /* Circular buffer size is enough to have the delay */
-  ringheader(d->ring)->write += CHANNELS*SAMPLERATE*sec;
-  return make_node(d, filter_delay, delay_free);
-}
-
-void filter_fwd_delay(delay *restrict d, soundbyte *restrict buf, int frames)
-{
-  for (int i = 0; i < frames*CHANNELS; i++) {
+/*  for (int i = 0; i < frames*CHANNELS; i++) {
     ringpush(d->ring, buf[i]);  
     buf[i] += ringshift(d->ring)*d->decay;
-  }
-}
-
-dsp_node *dsp_fwd_delay(double sec, double decay)
-{
-  delay *d = malloc(sizeof(*d));
-  d-> ms_delay = sec;
-  d->decay = decay;
-  d->ring = NULL;
-  d->ring = ringnew(d->ring, sec*CHANNELS*SAMPLERATE*2);
-  ringheader(d->ring)->write += CHANNELS*SAMPLERATE*sec;
-  return make_node(d, filter_fwd_delay, delay_free);
+  }*/
 }
 
 /* Get decay constant for a given pole */
@@ -426,76 +238,48 @@ double tau2pole(double tau)
     return exp(-1/(tau*SAMPLERATE));
 }
 
-void dsp_adsr_fillbuf(struct dsp_adsr *adsr, soundbyte *out, int n)
+void dsp_adsr(soundbyte *in, soundbyte *out, int frames, unsigned int atk, unsigned int dec, unsigned int sus, unsigned int rls, float time)
 {
   soundbyte val;
 
-  for (int i = 0; i < n; i++) {
-    if (adsr->time > adsr->rls) {
-      adsr->out = 0.f;
+  for (int i = 0; i < frames; i++) {
+/*    if (time > rls) {
+      out = 0.f;
       goto fin;
      }
 
-    if (adsr->time > adsr->sus) {
+    if (time > sus) {
       // Release phase
-      adsr->out = adsr->rls_t * adsr->out;
+      out = rls_t * out;
        goto fin;
     }
 
-    if (adsr->time > adsr->dec) {
+    if (time > dec) {
       // Sustain phase
-      adsr->out = adsr->sus_pwr;
+      out = sus_pwr;
       goto fin;
     }
 
-    if (adsr->time > adsr->atk) {
+    if (time > atk) {
       // Decay phase
-      adsr->out = (1 - adsr->dec_t) * adsr->sus_pwr + adsr->dec_t * adsr->out;
+      out = (1 - dec_t) * sus_pwr + dec_t * out;
       goto fin;
     }
 
     // Attack phase
-    adsr->out = (1-adsr->atk_t) + adsr->atk_t * adsr->out;
-    
+    out = (1-atk_t) + atk_t * out;
+*/    
     fin:
 
-    val = SHRT_MAX * adsr->out;
-    out[i*CHANNELS] = out[i*CHANNELS+1] = val;
-    adsr->time += (double)(1000.f / SAMPLERATE);
+//    val = SHRT_MAX * out;
+//    out[i*CHANNELS] = out[i*CHANNELS+1] = val;
+//    time += (double)(1000.f / SAMPLERATE);
     }
 }
 
-
-
-dsp_node *dsp_adsr(unsigned int atk, unsigned int dec, unsigned int sus, unsigned int rls)
+void dsp_noise_gate(soundbyte *in, soundbyte *out, int frames, float floor)
 {
-    struct dsp_adsr *adsr = malloc(sizeof(*adsr));
-    adsr->atk = atk;
-    /* decay to 3 tau */
-    adsr->atk_t = tau2pole(atk / 3000.f);
-
-    adsr->dec = dec + adsr->atk;
-    adsr->dec_t = tau2pole(dec / 3000.f);
-
-    adsr->sus = sus + adsr->dec;
-    adsr->sus_pwr = 0.8f;
-
-    adsr->rls = rls + adsr->sus;
-    adsr->rls_t = tau2pole(rls / 3000.f);
-
-    return make_node(adsr, dsp_adsr_fillbuf, NULL);
-}
-
-void filter_noise_gate(float *restrict floor, soundbyte *restrict out, int frames)
-{
-  for (int i = 0; i < frames*CHANNELS; i++) out[i] = fabsf(out[i]) < *floor ? 0.0 : out[i];
-}
-
-dsp_node *dsp_noise_gate(float floor)
-{
-  float *v = malloc(sizeof(float));
-  *v = floor;
-  return make_node(v, filter_noise_gate, NULL);
+  for (int i = 0; i < frames*CHANNELS; i++) out[i] = fabsf(in[i]) < floor ? 0.0 : out[i];
 }
 
 void filter_limiter(float *restrict ceil, soundbyte *restrict out, int n)
@@ -503,16 +287,9 @@ void filter_limiter(float *restrict ceil, soundbyte *restrict out, int n)
   for (int i = 0; i < n*CHANNELS; i++) out[i] = fabsf(out[i]) > *ceil ?  *ceil : out[i];
 }
 
-dsp_node *dsp_limiter(float ceil)
+void dsp_compressor(soundbyte *in, soundbyte *out, int frames)
 {
-  float *v = malloc(sizeof(float));
-  *v = ceil;
-  return make_node(v, filter_limiter, NULL);
-}
-
-void dsp_compressor_fillbuf(struct dsp_compressor *comp, soundbyte *out, int n)
-{
-    float val;
+/*    float val;
     float db;
     db = comp->target * (val - comp->threshold) / comp->ratio;
 
@@ -529,28 +306,10 @@ void dsp_compressor_fillbuf(struct dsp_compressor *comp, soundbyte *out, int n)
 
     // Apply same compression to both channels
     out[i*CHANNELS] = out[i*CHANNELS+1] = db2float(val) * ( out[i*CHANNELS] > 0 ? 1 : -1);
-    }
+    }*/
 }
 
-dsp_node *dsp_compressor()
-{
-    struct dsp_compressor new;
-
-    new.ratio = 4000;
-    new.atk = 50;
-    new.rls = 250;
-    new.target = 0.f;
-    new.threshold = -3.f;
-    new.atk_tau = tau2pole(new.atk / 3000.f);
-    new.rls_tau = tau2pole(new.rls / 3000.f);
-
-    struct dsp_compressor *c = malloc(sizeof(*c));
-    *c = new;
-    return make_node(c, dsp_compressor_fillbuf, NULL);
-}
-
-/* Assumes 2 channels in a frame */
-void pan_frames(soundbyte *out, float deg, int frames)
+void pan_frames(soundbyte *in, soundbyte *out, float deg, int frames)
 {
   if (deg == 0.f) return;
   if (deg < -1) deg = -1.f;
@@ -579,7 +338,7 @@ void pan_frames(soundbyte *out, float deg, int frames)
   }
 }
 
-void dsp_mono(void *p, soundbyte *restrict out, int n)
+void dsp_mono(soundbyte *in, soundbyte *out, int n)
 {
     for (int i = 0; i < n; i++) {
         soundbyte val = (out[i*CHANNELS] + out[i*CHANNELS+1]) / 2;
@@ -590,10 +349,10 @@ void dsp_mono(void *p, soundbyte *restrict out, int n)
 }
 
 #define ROUND(f) ((float)((f>0.0)?floor(f+0.5):ceil(f-0.5)))
-void filter_bitcrush(struct bitcrush *restrict b, soundbyte *restrict out, int frames)
+void dsp_bitcrush(soundbyte *in, soundbyte *out, int frames, float sr, float res, float depth)
 {
-  int max = pow(2,b->depth) - 1;
-  int step = SAMPLERATE/b->sr;
+  int max = pow(2,depth) - 1;
+  int step = SAMPLERATE/sr;
 
   int i = 0;
   while (i < frames) {
@@ -607,12 +366,4 @@ void filter_bitcrush(struct bitcrush *restrict b, soundbyte *restrict out, int f
       i++;
     }
   }
-}
-
-dsp_node *dsp_bitcrush(float sr, float res)
-{
-  struct bitcrush *b = malloc(sizeof(*b));
-  b->sr = sr;
-  b->depth = res;
-  return make_node(b, filter_bitcrush, NULL);
 }

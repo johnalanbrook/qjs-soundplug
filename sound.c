@@ -8,6 +8,8 @@
 
 #include "stb_ds.h"
 
+#define CHANNELS 2
+
 #include "dsp.h"
 
 #define POCKETMOD_IMPLEMENTATION
@@ -110,17 +112,6 @@ void change_samplerate(struct pcm *w, int rate) {
 void filter_mod(pocketmod_context *mod, soundbyte *buffer, int frames)
 {
   pocketmod_render(mod, buffer, frames*CHANNELS*sizeof(soundbyte));
-}
-
-dsp_node *dsp_mod(const char *path, void *data, size_t modsize)
-{
-  pocketmod_context *mod = malloc(sizeof(*mod));
-  pocketmod_init(mod, data, modsize, SAMPLERATE);
-  return make_node(mod, filter_mod, NULL);
-}
-
-void sound_init() {
-  dsp_init();
 }
 
 struct pcm *make_pcm(void *raw, size_t rawlen, char *ext) {
@@ -229,17 +220,6 @@ void sound_fillbuf(struct sound *s, soundbyte *buf, int n) {
 void free_source(struct sound *s)
 {
   free(s);
-}
-
-struct dsp_node *dsp_source(pcm *pcm)
-{
-  if (!pcm) return NULL;
-  struct sound *self = malloc(sizeof(*self));
-  self->frame = 0;
-  self->data = pcm;
-  self->loop = 0;
-  dsp_node *n = make_node(self, sound_fillbuf, free_source);
-  return n;
 }
 
 int sound_finished(const struct sound *s) {
