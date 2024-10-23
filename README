@@ -1,0 +1,1 @@
+This is an extraction of the sound system from Prosperon, currently not working. Ultimately it's going to be a QuickJS plugin that allows you to set up a system of nodes and get chunks of data processed from it as a blob that can then be passed into your audio system of choice.
