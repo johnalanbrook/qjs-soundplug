@@ -6,8 +6,6 @@
 #include "time.h"
 #include <stdlib.h>
 
-#include "stb_ds.h"
-
 #define CHANNELS 2
 
 #include "dsp.h"

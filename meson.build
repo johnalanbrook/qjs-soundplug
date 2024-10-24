@@ -17,17 +17,30 @@ sources = [
   'sound.c',
 ]
 
-quickjs = dependency('quickjs', fallback:['quickjs', 'quickjs_dep'])
+deps = []
+
+if host_machine.system() == 'darwin'
+  add_project_arguments('-x', 'objective-c', language: 'c')
+  fworks = ['audiotoolbox']
+  foreach fkit : fworks
+    deps += dependency('appleframeworks', modules: fkit)
+  endforeach
+endif
+
+
+quickjs = dependency('quickjs', fallback:['quickjs', 'quickjs_dep'], static:true)
 
 libtype = get_option('default_library')
 if libtype == 'static'
   add_project_arguments('-DJS_SHARED_LIBRARY', language:'c')
 endif
 
-qjs_soundplug_lib = library('qjs-soundplug',
+qjs_soundplug_lib = library('soundplug',
   sources: sources + 'qjs_soundplug.c',
   include_directories: [inc],
   dependencies: [quickjs],
+  name_suffix: 'so',
+  name_prefix: '',
 )
 
 qjs_soundplug_dep = declare_dependency(
@@ -35,8 +48,15 @@ qjs_soundplug_dep = declare_dependency(
   include_directories : inc
 )
 
-qjs_sokol_audio_lib = library('qjs-sokol_audio',
+
+qjs_sokol_audio_lib = library('sokol_audio',
   sources: 'qjs_sokol_audio.c',
   include_directories: inc,
-  dependencies: [quickjs]
+  dependencies: [quickjs] + deps,
+  name_suffix: 'so',
+  name_prefix: ''
+)
+
+qjs_sokol_audio_dep = declare_dependency(
+  link_with: qjs_sokol_audio_lib,
 )
